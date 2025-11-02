@@ -1,15 +1,41 @@
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from app.schemas import WebhookMessage, TelexResponse
 from app.agent.core import process_telex_message, get_ai_response
+from app.exceptions import (
+    ErrorResponse,
+    AppException,
+    LLMServiceError,
+    ValidationError,
+    NotFoundError,
+    http_exception_handler,
+    app_exception_handler,
+    generic_exception_handler,
+    validation_exception_handler
+)
 import os
 
 # Initialize FastAPI app
 app = FastAPI(
     title="Telex.im AI Code Helper Agent",
     description="Backend for the AI agent to provide code reviews and explanations via Telex.im webhooks.",
-    version="1.0.0"
+    version="1.0.0",
+    responses={
+        400: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        403: {"model": ErrorResponse},
+        404: {"model": ErrorResponse},
+        422: {"model": ErrorResponse},
+        500: {"model": ErrorResponse},
+    }
 )
+
+# Add exception handlers
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(AppException, app_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)
 
 # Root Endpoint for Health Check
 @app.get("/", status_code=status.HTTP_200_OK)
@@ -38,29 +64,24 @@ async def telex_webhook_handler(message: WebhookMessage):
     # 3. Return the payload. FastAPI automatically converts the Pydantic model to JSON.
     return response_payload
 
-@app.get("/test-llm", status_code=status.HTTP_200_OK)
+@app.get("/test-llm", 
+         response_model=dict,
+         responses={
+             200: {"description": "Successfully connected to LLM service"},
+             503: {"description": "LLM service unavailable"}
+         })
 async def test_llm_connection():
     """
     Test endpoint to verify LLM connection and basic functionality.
     Returns a simple response from the LLM to confirm it's working.
     """
-    try:
-        # Test with a simple prompt
-        test_prompt = "Hello! Are you working? Please respond with a short confirmation that you're operational."
-        response = get_ai_response(test_prompt)
-        
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "status": "success",
-                "llm_response": response,
-                "message": "LLM connection is working correctly!"
-            }
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM service error: {str(e)}"
-        )
+    test_prompt = "Hello! Are you working? Please respond with a short confirmation that you're operational."
+    response = get_ai_response(test_prompt)
+    
+    return {
+        "status": "success",
+        "llm_response": response,
+        "message": "LLM connection is working correctly!"
+    }
 
 # Uvicorn command to run: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
